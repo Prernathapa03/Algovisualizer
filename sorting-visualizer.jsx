@@ -230,6 +230,10 @@ export default function SortingVisualizer() {
   const [algorithm, setAlgorithm] = useState('bubble');
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const isRunningRef = useRef(false);
+  const isPausedRef = useRef(false);
+  const speedRef = useRef(50);
+  const runIdRef = useRef(0);
   const [speed, setSpeed] = useState(50);
   const [comparing, setComparing] = useState([]);
   const [swapping, setSwapping] = useState([]);
@@ -241,6 +245,7 @@ export default function SortingVisualizer() {
   const [customInput, setCustomInput] = useState('');
   
   const generatorRef = useRef(null);
+  speedRef.current = speed;
   const audioContextRef = useRef(null);
 
   // Initialize array on mount
@@ -285,6 +290,9 @@ export default function SortingVisualizer() {
     setSorted([]);
     setCurrentStep('');
     generatorRef.current = null;
+    isRunningRef.current = false;
+    isPausedRef.current = false;
+    runIdRef.current += 1;
   };
 
   // Play sound effect
@@ -314,27 +322,42 @@ export default function SortingVisualizer() {
 
   // Start sorting visualization
   const startSorting = async () => {
-    if (isRunning && !isPaused) return;
-    
+    // If already running: only resume when paused, otherwise do nothing
+    if (isRunningRef.current) {
+      if (isPausedRef.current) {
+        isPausedRef.current = false;
+        setIsPaused(false);
+      }
+      return;
+    }
+
     if (!generatorRef.current) {
       resetVisualization();
       const sortFn = ALGORITHMS[algorithm].fn;
       generatorRef.current = sortFn([...array]);
     }
-    
+
+    isRunningRef.current = true;
+    isPausedRef.current = false;
+    const myRun = ++runIdRef.current;
     setIsRunning(true);
     setIsPaused(false);
-    
-    const delay = (101 - speed) * 10; // Convert speed to delay
-    
+
     try {
       let step = generatorRef.current.next();
-      
+
       while (!step.done) {
-        if (!isRunning || isPaused) break;
-        
+        // Stop if Reset was pressed
+        if (!isRunningRef.current || !generatorRef.current || runIdRef.current !== myRun) return;
+
+        // Wait here while paused
+        while (isPausedRef.current && isRunningRef.current) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!isRunningRef.current || !generatorRef.current || runIdRef.current !== myRun) return;
+
         const { type, indices, array: newArray } = step.value;
-        
+
         // Update visualization state based on step type
         switch (type) {
           case 'compare':
@@ -343,7 +366,7 @@ export default function SortingVisualizer() {
             setCurrentStep(`Comparing elements at positions ${indices.join(' and ')}`);
             playSound(200 + indices[0] * 10);
             break;
-            
+
           case 'swap':
             setSwapping(indices);
             setComparing([]);
@@ -351,7 +374,7 @@ export default function SortingVisualizer() {
             setCurrentStep(`Swapping elements at positions ${indices.join(' and ')}`);
             playSound(300 + indices[0] * 10);
             break;
-            
+
           case 'overwrite':
             setArray(newArray);
             setSwapping(indices);
@@ -359,24 +382,30 @@ export default function SortingVisualizer() {
             setCurrentStep(`Inserting element at position ${indices[0]}`);
             playSound(250 + indices[0] * 10);
             break;
-            
+
           case 'markSorted':
             setSorted(prev => [...prev, indices]);
             setCurrentStep(`Position ${indices} is now in final place`);
             playSound(400);
             break;
         }
-        
+
+        // Speed is read from a ref so the slider works while sorting
+        const delay = (101 - speedRef.current) * 10;
         await new Promise(resolve => setTimeout(resolve, delay));
+
+        if (!generatorRef.current || runIdRef.current !== myRun) return;
         step = generatorRef.current.next();
       }
-      
+
       // Mark all as sorted when complete
-      if (step.done) {
-        setSorted(array.map((_, i) => i));
-        setCurrentStep('Sorting complete!');
-        setIsRunning(false);
-      }
+      setSorted(array.map((_, i) => i));
+      setComparing([]);
+      setSwapping([]);
+      setCurrentStep('Sorting complete!');
+      isRunningRef.current = false;
+      setIsRunning(false);
+      generatorRef.current = null;
     } catch (error) {
       console.error('Sorting error:', error);
       resetVisualization();
@@ -385,7 +414,8 @@ export default function SortingVisualizer() {
 
   // Pause/Resume
   const togglePause = () => {
-    setIsPaused(!isPaused);
+    isPausedRef.current = !isPausedRef.current;
+    setIsPaused(isPausedRef.current);
   };
 
   // Stop and reset
